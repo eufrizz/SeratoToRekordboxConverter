@@ -1,5 +1,10 @@
 # Serato to Rekordbox Converter
 
+## Changelog
+2024-02-08
+- Fixed m4a cues not being read
+- Remove 'base_dir' variable that needed setting
+
 ## Overview
 
 This script provides an automated solution for converting Serato crates into Rekordbox playlists. It is designed for DJs who primarily use Serato but also perform with standalone Rekordbox equipment. The script eliminates the time-consuming task of manually updating your Rekordbox library with new tracks.

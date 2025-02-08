@@ -1,8 +1,7 @@
 #Serato to Rekordbox converter by BytePhoenix
 #change the values below
 
-serato_folder_path = "_Serato_/subcrates"
-base_dir = "Users/administrator/Music/"
+serato_folder_path = "/Users/Eugene/Music/_Serato_/Subcrates"
 
 #------------------------------------------------
 
@@ -15,7 +14,6 @@ from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 import base64
-import traceback
 
 START_MARKER = b'ptrk'
 PATH_LENGTH_OFFSET = 4
@@ -90,6 +88,30 @@ def extract_file_paths_from_crate(crate_file_path, encoding='utf-16-be'):
 
     return results
 
+def parse(data):
+    """
+    Yield the data up to the next 0x00 (if not empty)
+    """
+    index = 0
+    while index < len(data):
+        next_null = data[index:].find(b'\x00')
+        if next_null == 0:
+            index += 1
+        else:
+            yield(data[index:index+next_null])
+            index += next_null
+
+def decode_b64(data):
+    clean_base64_data = re.sub(r'[^a-zA-Z0-9+/=]', '', data.decode('utf-8'))
+    # Pad the base64 string to make its length a multiple of 4
+    padding_needed = 4 - len(clean_base64_data) % 4
+    if padding_needed != 4:
+        clean_base64_data += "=" * padding_needed
+
+    # This may raise an exception
+    decoded = base64.b64decode(clean_base64_data)
+    return decoded
+
 def extract_m4a_metadata(track):
     audio = MP4(track)
     
@@ -102,9 +124,23 @@ def extract_m4a_metadata(track):
     
     # Check for both '----:com.serato:markersv2' and '----:com.serato.dj:markersv2'
     serato_markers_base64 = audio.get('----:com.serato:markersv2', [None])[0] or audio.get('----:com.serato.dj:markersv2', [None])[0]
-    
+    marker_data = None
     if serato_markers_base64:
-        hot_cues = parseSeratoHotCues(serato_markers_base64, track)
+        # For some reason, m4a files have their cue data hidden in another layer of base64 encoding that looks like this:
+        # application/octet-stream\x00\x00Serato Markers2\x00\x01\x01AQFDT0xPUgAAAAAEAP///0NVRQAAAAANAAAAACjpAMwAAAAAAENVRQAAAAANAAEAAFTDAMyI\nAAAAAEJQTUxPQ0sAAAAAAQAA\x00
+        # So we want to grab this block proceeding 'Serato Markers2'
+        try:
+            iterator = parse(decode_b64(serato_markers_base64))
+        except Exception as e:
+            print(f"Error decoding marker base64 data: {e} {serato_markers_base64}")  
+        else:
+            for block in iterator:
+                if block.decode('utf-8') == 'Serato Markers2':
+                    marker_data = next(iterator)
+                    break
+
+    if marker_data:
+        hot_cues = parseSeratoHotCues(marker_data, track)
         return audio_metadata, hot_cues
     else:
         return audio_metadata, []
@@ -143,19 +179,11 @@ def extract_mp3_metadata(track):
 
 def parseSeratoHotCues(base64_data, track):
     # Remove non-base64 characters
-    clean_base64_data = re.sub(r'[^a-zA-Z0-9+/=]', '', base64_data.decode('utf-8'))
-
-    # Pad the base64 string to make its length a multiple of 4
-    padding_needed = 4 - len(clean_base64_data) % 4
-    if padding_needed != 4:
-        clean_base64_data += "=" * padding_needed
-
     try:
-        data = base64.b64decode(clean_base64_data)
+        data = decode_b64(base64_data)
     except Exception as e:
         print(f"Error decoding base64 data: {e} {track}")  
         return []
-    
     index = 0
     hot_cues = []
     
@@ -203,7 +231,7 @@ for path in serato_crate_paths:
         processedSeratoFiles[playlistName] = []
 
     for track in extract_file_paths_from_crate(path):
-        track = os.path.relpath(track, base_dir)
+        track = os.path.abspath('/' + track)
         audio_metadata = {}
         hot_cues = []
 
@@ -240,7 +268,6 @@ for path in serato_crate_paths:
 
         except Exception as e:
             print(f"An exception occurred: {e}")
-            #traceback.print_exc()
             unsuccessfulConversions.append(track)
 
 generate_rekordbox_xml(processedSeratoFiles)
